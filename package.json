@@ -1,0 +1,16 @@
+{
+  "name": "force-graph-layout",
+  "version": "1.0.0",
+  "description": "From-scratch force-directed graph layout engine (Fruchterman-Reingold) with a Barnes-Hut quadtree for O(n log n) repulsion, plus an interactive canvas demo.",
+  "type": "module",
+  "main": "src/forceLayout.js",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "benchmark": "node benchmark.js"
+  },
+  "license": "MIT",
+  "author": "MohammadHossinzehi",
+  "engines": {
+    "node": ">=18"
+  }
+}
