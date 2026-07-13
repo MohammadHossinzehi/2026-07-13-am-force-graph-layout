@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Force-Directed Graph Layout — Barnes-Hut Demo</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1115;
+    color: #e6e6e6;
+    overflow: hidden;
+  }
+  #canvas { display: block; cursor: grab; }
+  #canvas.dragging { cursor: grabbing; }
+  #panel {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    background: rgba(20, 22, 28, 0.9);
+    border: 1px solid #2a2d36;
+    border-radius: 8px;
+    padding: 14px 16px;
+    width: 260px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  #panel h1 { font-size: 15px; margin: 0 0 8px; }
+  #panel .row { display: flex; justify-content: space-between; margin: 4px 0; }
+  #panel label { display: block; margin-top: 10px; }
+  #panel button {
+    width: 100%;
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: #2563eb;
+    border: none;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #panel button:hover { background: #1d4ed8; }
+  #panel input[type="range"] { width: 100%; }
+  .stat { color: #9aa3af; }
+  .val { color: #e6e6e6; font-variant-numeric: tabular-nums; }
+  #hint {
+    position: fixed;
+    bottom: 12px;
+    left: 12px;
+    color: #6b7280;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="panel">
+  <h1>Force-Directed Layout</h1>
+  <div class="row"><span class="stat">Nodes</span><span class="val" id="stat-nodes">-</span></div>
+  <div class="row"><span class="stat">Edges</span><span class="val" id="stat-edges">-</span></div>
+  <div class="row"><span class="stat">Iteration</span><span class="val" id="stat-iter">-</span></div>
+  <div class="row"><span class="stat">Step time</span><span class="val" id="stat-step">-</span></div>
+  <div class="row"><span class="stat">FPS</span><span class="val" id="stat-fps">-</span></div>
+
+  <label><input type="checkbox" id="toggle-bh" checked /> Barnes-Hut approximation</label>
+  <label>theta (accuracy vs speed): <span id="theta-val">0.8</span>
+    <input type="range" id="theta" min="0" max="2" step="0.05" value="0.8" />
+  </label>
+
+  <button id="btn-restart">Restart layout</button>
+  <button id="btn-random">Load random graph (300 nodes)</button>
+  <button id="btn-tech">Load tech-ecosystem graph</button>
+</div>
+<div id="hint">Drag nodes to reposition · drag background to pan · scroll to zoom</div>
+
+<script type="module">
+import { Graph } from '../src/graph.js';
+import { ForceLayout } from '../src/forceLayout.js';
+import { techEcosystem } from './data.js';
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let graph, layout;
+let view = { x: 0, y: 0, scale: 1 };
+let dragTarget = null; // node object while dragging it
+let dragPos = null; // world-space {x, y} the dragged node should be glued to
+let panning = false;
+let lastPan = null;
+let frameCount = 0, lastFpsTime = performance.now(), fps = 0;
+
+const els = {
+  nodes: document.getElementById('stat-nodes'),
+  edges: document.getElementById('stat-edges'),
+  iter: document.getElementById('stat-iter'),
+  step: document.getElementById('stat-step'),
+  fps: document.getElementById('stat-fps'),
+  bh: document.getElementById('toggle-bh'),
+  theta: document.getElementById('theta'),
+  thetaVal: document.getElementById('theta-val'),
+};
+
+function buildLayout(g) {
+  graph = g;
+  layout = new ForceLayout(graph, {
+    width: 2000,
+    height: 1400,
+    useBarnesHut: els.bh.checked,
+    theta: parseFloat(els.theta.value),
+  });
+  view = { x: canvas.width / 2 - 1000, y: canvas.height / 2 - 700, scale: 0.55 };
+  els.nodes.textContent = graph.nodeList.length;
+  els.edges.textContent = graph.edges.length;
+}
+
+function randomGraph(n) {
+  const g = new Graph();
+  for (let i = 0; i < n; i++) g.addNode(`n${i}`, { x: Math.random() * 2000, y: Math.random() * 1400 });
+  for (let i = 0; i < n; i++) {
+    const links = 1 + Math.floor(Math.random() * 2);
+    for (let k = 0; k < links; k++) {
+      const j = Math.floor(Math.random() * n);
+      if (j !== i) g.addEdge(`n${i}`, `n${j}`);
+    }
+  }
+  return g;
+}
+
+let currentBuilder = () => Graph.fromJSON(techEcosystem);
+buildLayout(currentBuilder());
+
+document.getElementById('btn-restart').onclick = () => buildLayout(currentBuilder());
+document.getElementById('btn-random').onclick = () => {
+  currentBuilder = () => randomGraph(300);
+  buildLayout(currentBuilder());
+};
+document.getElementById('btn-tech').onclick = () => {
+  currentBuilder = () => Graph.fromJSON(techEcosystem);
+  buildLayout(currentBuilder());
+};
+
+els.bh.onchange = () => { layout.useBarnesHut = els.bh.checked; layout.temperature = Math.max(layout.temperature, 20); };
+els.theta.oninput = () => { layout.theta = parseFloat(els.theta.value); els.thetaVal.textContent = els.theta.value; };
+
+function worldToScreen(x, y) {
+  return [x * view.scale + view.x, y * view.scale + view.y];
+}
+function screenToWorld(x, y) {
+  return [(x - view.x) / view.scale, (y - view.y) / view.scale];
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+  let closest = null, closestDist = 18 / view.scale;
+  for (const n of graph.nodeList) {
+    const d = Math.hypot(n.x - wx, n.y - wy);
+    if (d < closestDist) { closest = n; closestDist = d; }
+  }
+  if (closest) {
+    dragTarget = closest;
+    dragTarget._pinned = true;
+    dragPos = { x: wx, y: wy };
+  } else {
+    panning = true;
+    lastPan = [e.clientX, e.clientY];
+    canvas.classList.add('dragging');
+  }
+});
+window.addEventListener('mousemove', (e) => {
+  if (dragTarget) {
+    const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+    dragPos = { x: wx, y: wy };
+    layout.temperature = Math.max(layout.temperature, 15);
+  } else if (panning) {
+    view.x += e.clientX - lastPan[0];
+    view.y += e.clientY - lastPan[1];
+    lastPan = [e.clientX, e.clientY];
+  }
+});
+window.addEventListener('mouseup', () => {
+  if (dragTarget) dragTarget._pinned = false;
+  dragTarget = null;
+  dragPos = null;
+  panning = false;
+  canvas.classList.remove('dragging');
+});
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = Math.exp(-e.deltaY * 0.001);
+  const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+  view.scale *= factor;
+  const [sx, sy] = worldToScreen(wx, wy);
+  view.x += e.clientX - sx;
+  view.y += e.clientY - sy;
+}, { passive: false });
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+
+  ctx.strokeStyle = 'rgba(120, 140, 170, 0.35)';
+  ctx.lineWidth = 1;
+  for (const e of graph.edges) {
+    const s = graph.nodes.get(e.source);
+    const t = graph.nodes.get(e.target);
+    const [sx, sy] = worldToScreen(s.x, s.y);
+    const [tx, ty] = worldToScreen(t.x, t.y);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(tx, ty);
+    ctx.stroke();
+  }
+
+  const showLabels = graph.nodeList.length <= 80;
+  for (const n of graph.nodeList) {
+    const [sx, sy] = worldToScreen(n.x, n.y);
+    const r = Math.min(4 + graph.degree(n.id) * 1.4, 14) * Math.max(view.scale, 0.4);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = n._pinned ? '#f97316' : '#60a5fa';
+    ctx.fill();
+
+    if (showLabels && view.scale > 0.35) {
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = `${11 * Math.max(view.scale, 0.6)}px sans-serif`;
+      ctx.fillText(n.id, sx + r + 3, sy + 3);
+    }
+  }
+  ctx.restore();
+}
+
+function tick() {
+  const t0 = performance.now();
+  if (graph.nodeList.length > 0) layout.step();
+  if (dragTarget && dragPos) {
+    // Physics still ran above (it's fine, and keeps the rest of the graph
+    // reacting to the dragged node's last position); glue the dragged node
+    // to the cursor after the step so it doesn't fight the simulation.
+    dragTarget.x = dragPos.x;
+    dragTarget.y = dragPos.y;
+  }
+  const stepMs = performance.now() - t0;
+
+  draw();
+
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime > 500) {
+    fps = Math.round((frameCount * 1000) / (now - lastFpsTime));
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+
+  els.iter.textContent = layout.iteration;
+  els.step.textContent = `${stepMs.toFixed(2)} ms`;
+  els.fps.textContent = fps;
+
+  requestAnimationFrame(tick);
+}
+
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
